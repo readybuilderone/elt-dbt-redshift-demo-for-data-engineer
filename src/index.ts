@@ -43,7 +43,7 @@ export class DataOPS extends cdk.Construct{
                     },
                     build: {
                         commands: ['echo Entered the build phase for dbt...', 
-                        `docker build -t $ECR_REPO_URI:$TAG images/dbt/`],
+                        `docker build -t $ECR_REPO_URI:$TAG images/`],
                     },
                     post_build: {
                         commands: ['echo Pushing dbt docker image...', 
@@ -53,10 +53,6 @@ export class DataOPS extends cdk.Construct{
               }),
         });
 
-
-
         ecrRepo.grantPullPush(codeProject.role!);
-
-    
     }
 }
