@@ -39,6 +39,10 @@
   },
   "dependencies": {
     "@aws-cdk/assert": "^1.95.2",
+    "@aws-cdk/aws-codebuild": "^1.95.2",
+    "@aws-cdk/aws-codecommit": "^1.95.2",
+    "@aws-cdk/aws-codepipeline-actions": "^1.95.2",
+    "@aws-cdk/aws-ecr": "^1.95.2",
     "@aws-cdk/core": "^1.95.2"
   },
   "bundledDependencies": [],

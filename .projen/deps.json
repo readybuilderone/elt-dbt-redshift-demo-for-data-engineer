@@ -79,6 +79,26 @@
       "type": "runtime"
     },
     {
+      "name": "@aws-cdk/aws-codebuild",
+      "version": "^1.95.2",
+      "type": "runtime"
+    },
+    {
+      "name": "@aws-cdk/aws-codecommit",
+      "version": "^1.95.2",
+      "type": "runtime"
+    },
+    {
+      "name": "@aws-cdk/aws-codepipeline-actions",
+      "version": "^1.95.2",
+      "type": "runtime"
+    },
+    {
+      "name": "@aws-cdk/aws-ecr",
+      "version": "^1.95.2",
+      "type": "runtime"
+    },
+    {
       "name": "@aws-cdk/core",
       "version": "^1.95.2",
       "type": "runtime"
