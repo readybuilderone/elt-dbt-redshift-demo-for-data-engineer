@@ -47,6 +47,7 @@
     "@aws-cdk/aws-ecs": "^1.95.2",
     "@aws-cdk/aws-events-targets": "^1.95.2",
     "@aws-cdk/aws-iam": "^1.95.2",
+    "@aws-cdk/aws-mwaa": "^1.95.2",
     "@aws-cdk/aws-redshift": "^1.95.2",
     "@aws-cdk/aws-s3": "^1.95.2",
     "@aws-cdk/aws-secretsmanager": "^1.95.2",

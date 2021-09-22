@@ -15,6 +15,7 @@ const project = new AwsCdkTypeScriptApp({
     '@aws-cdk/aws-s3',
     '@aws-cdk/aws-ecs',
     '@aws-cdk/aws-iam',
+    '@aws-cdk/aws-mwaa',
   ],
   context: {
     '@aws-cdk/core:newStyleStackSynthesis':true,

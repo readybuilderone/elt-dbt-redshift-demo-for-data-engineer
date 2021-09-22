@@ -8,48 +8,50 @@ import * as redshift from '@aws-cdk/aws-redshift';
 import * as secretsmanager from '@aws-cdk/aws-secretsmanager';
 import * as ecs from '@aws-cdk/aws-ecs';
 import * as iam from '@aws-cdk/aws-iam';
-
+import * as s3 from '@aws-cdk/aws-s3';
+import * as mwaa from '@aws-cdk/aws-mwaa';
 
 export class DataOPS extends cdk.Construct{
     private readonly RedshiftUser ='redshift-user';
     private readonly RedshiftDB ='redshift-db';
     private readonly RedshiftSchema='public';
+    private readonly ECRRepoName = 'elt-dbt-repo';
 
     constructor(scope: cdk.Construct, id: string) {
         super(scope, id);
 
-        const vpc = new ec2.Vpc(this, 'dataops-vpc', {
-            maxAzs: 2,
-            natGateways:1,
-        });
-        const ecrRepo = new ecr.Repository(this, 'elt-dbt-repo', {
-            repositoryName: 'elt-dbt-repo',
-            removalPolicy: cdk.RemovalPolicy.DESTROY,
-        });
-        
-        const redshiftSecret = new secretsmanager.Secret(this, 'redshift-credentials', {
-            secretName: 'redshift-credentials',
-            generateSecretString: {
-              secretStringTemplate: '{"username":"redshift-user"}',
-              generateStringKey: 'password',
-              passwordLength: 32,
-              excludeCharacters: '\"@/',
-              excludePunctuation: true,
-            },
-          });
+        const vpc = this._createVPC();
 
-        const redshiftCluster = this._createRedshiftCluster(vpc, redshiftSecret);
-
+        const ecrRepo = this._createECRRepo();
         this._createDataOPSPipeline(ecrRepo);
+        
+        const redshiftSecret = this._createRedshiftSecret();
+        const redshiftCluster = this._createRedshiftCluster(vpc, redshiftSecret);
+        
+        this._createECSResources(vpc, ecrRepo, redshiftCluster, redshiftSecret);
 
-        // this._getAirflowBucket();
-        new ecs.Cluster(this, 'dataops-ecs-cluster', {
+        const airflowBucket = this._getAirflowBucket();
+        new cdk.CfnOutput(this, 'AirflowBucketName', {
+            value: airflowBucket.bucketName,
+        });
+
+        new mwaa.CfnEnvironment(this, 'id', {
+            name: 'airflow'
+        });
+        //https://github.com/094459/blogpost-cdk-mwaa/blob/main/mwaa_cdk/mwaa_cdk_env.py
+    }
+
+    private _createECSResources(vpc: ec2.Vpc, ecrRepo: ecr.Repository, redshiftCluster: redshift.ICluster, redshiftSecret: secretsmanager.Secret) {
+        const ecsCluster = new ecs.Cluster(this, 'dataops-ecs-cluster', {
             vpc,
             clusterName: 'dataops-ecs-cluster',
             containerInsights: true,
-        })
+        });
+        new cdk.CfnOutput(this, 'EcsClusterName', {
+            value: ecsCluster.clusterName,
+        });
 
-        const executionRole= this._createTaskExecutionRole();
+        const executionRole = this._createTaskExecutionRole();
         const dataopsTaskDefinition = new ecs.FargateTaskDefinition(this, 'dataops-task-def', {
             family: 'dataops-task',
             cpu: 512,
@@ -57,12 +59,22 @@ export class DataOPS extends cdk.Construct{
             executionRole,
             taskRole: this._createTaskRole(),
         });
+        new cdk.CfnOutput(this, 'TaskDefinition', {
+            value: dataopsTaskDefinition.family,
+        });
+
+        vpc.privateSubnets.forEach(subnet => {
+            new cdk.CfnOutput(this, subnet.availabilityZone + '-SubnetId', {
+                value: subnet.subnetId,
+            });
+        });
+
         dataopsTaskDefinition.addContainer('dataops-container', {
             image: ecs.AssetImage.fromEcrRepository(ecrRepo),
             environment: {
                 'REDSHIFT_HOST': redshiftCluster.clusterEndpoint.hostname,
-                'REDSHIFT_DBNAME':this.RedshiftDB,
-                'REDSHIFT_SCHEMA':this.RedshiftSchema,
+                'REDSHIFT_DBNAME': this.RedshiftDB,
+                'REDSHIFT_SCHEMA': this.RedshiftSchema,
             },
             secrets: {
                 'REDSHIFT_USER': ecs.Secret.fromSecretsManager(redshiftSecret, 'username'),
@@ -72,8 +84,35 @@ export class DataOPS extends cdk.Construct{
                 streamPrefix: 'ecs',
             })
         });
-        
+
         ecrRepo.grantPullPush(executionRole);
+    }
+
+    private _createVPC() {
+        return new ec2.Vpc(this, 'dataops-vpc', {
+            maxAzs: 2,
+            natGateways: 1,
+        });
+    }
+
+    private _createECRRepo() {
+        return new ecr.Repository(this, 'elt-dbt-repo', {
+            repositoryName: this.ECRRepoName,
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+        });
+    }
+
+    private _createRedshiftSecret() {
+        return new secretsmanager.Secret(this, 'redshift-credentials', {
+            secretName: 'redshift-credentials',
+            generateSecretString: {
+                secretStringTemplate: '{"username":"redshift-user"}',
+                generateStringKey: 'password',
+                passwordLength: 32,
+                excludeCharacters: '\"@/',
+                excludePunctuation: true,
+            },
+        });
     }
 
     private _createTaskExecutionRole(): iam.Role {
@@ -103,26 +142,21 @@ export class DataOPS extends cdk.Construct{
         return taskRole;
       }
 
-    // private _getAirflowBucket(): s3.IBucket {
-    //     const bucketName = `airflow-bucket-${Math.floor(Math.random() * 1000001)}`;
-    //     const airflowBucket = new s3.Bucket(this, 'AirflowBucket', {
-    //       bucketName,
-    //       removalPolicy: cdk.RemovalPolicy.DESTROY,
-    //       blockPublicAccess: new s3.BlockPublicAccess({
-    //         blockPublicAcls: true,
-    //         blockPublicPolicy: true,
-    //         ignorePublicAcls: true,
-    //         restrictPublicBuckets: true,
-    //       }),
-    //       autoDeleteObjects: true,
-    //     });
-    //     new cdk.CfnOutput(this, 'airflow-bucket', {
-    //       value: airflowBucket.bucketName,
-    //       exportName: 'AirflowBucket',
-    //       description: 'Buckent Name',
-    //     });
-    //     return airflowBucket;
-    //   }
+    private _getAirflowBucket(): s3.IBucket {
+        const bucketName = `airflow-bucket-${Math.floor(Math.random() * 1000001)}`;
+        const airflowBucket = new s3.Bucket(this, 'AirflowBucket', {
+          bucketName,
+          removalPolicy: cdk.RemovalPolicy.DESTROY,
+          blockPublicAccess: new s3.BlockPublicAccess({
+            blockPublicAcls: true,
+            blockPublicPolicy: true,
+            ignorePublicAcls: true,
+            restrictPublicBuckets: true,
+          }),
+          autoDeleteObjects: true,
+        });
+        return airflowBucket;
+      }
 
     private _createDataOPSPipeline(ecrRepo: ecr.IRepository) {
         

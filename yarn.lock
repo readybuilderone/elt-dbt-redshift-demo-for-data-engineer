@@ -504,6 +504,13 @@
     "@aws-cdk/core" "1.124.0"
     constructs "^3.3.69"
 
+"@aws-cdk/aws-mwaa@^1.95.2":
+  version "1.124.0"
+  resolved "https://registry.yarnpkg.com/@aws-cdk/aws-mwaa/-/aws-mwaa-1.124.0.tgz#5d239b0c55d9c3a2e66364bac77e0c9483dbfe6b"
+  integrity sha512-RcxsVkvvNtL7XrNxC1XTQmIUhQLTjXZvsV6PvoykONLkmzsRT8DunL9A66fx08UaSE8vW+Fc0i93QBGIvQbTwA==
+  dependencies:
+    "@aws-cdk/core" "1.124.0"
+
 "@aws-cdk/aws-redshift@^1.95.2":
   version "1.124.0"
   resolved "https://registry.yarnpkg.com/@aws-cdk/aws-redshift/-/aws-redshift-1.124.0.tgz#89914c1be574bafd78217545458f444a6e6d9a74"
