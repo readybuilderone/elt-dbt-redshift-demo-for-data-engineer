@@ -2,33 +2,153 @@ import * as cdk from '@aws-cdk/core';
 import * as codecommit from '@aws-cdk/aws-codecommit';
 import * as codebuild from '@aws-cdk/aws-codebuild';
 import * as ecr from '@aws-cdk/aws-ecr';
+import * as targets from '@aws-cdk/aws-events-targets';
+import * as ec2 from '@aws-cdk/aws-ec2';
+import * as redshift from '@aws-cdk/aws-redshift';
+import * as secretsmanager from '@aws-cdk/aws-secretsmanager';
+import * as ecs from '@aws-cdk/aws-ecs';
+import * as iam from '@aws-cdk/aws-iam';
+
 
 export class DataOPS extends cdk.Construct{
+    private readonly RedshiftUser ='redshift-user';
+    private readonly RedshiftDB ='redshift-db';
+    private readonly RedshiftSchema='public';
 
     constructor(scope: cdk.Construct, id: string) {
         super(scope, id);
 
+        const vpc = new ec2.Vpc(this, 'dataops-vpc', {
+            maxAzs: 2,
+            natGateways:1,
+        });
         const ecrRepo = new ecr.Repository(this, 'elt-dbt-repo', {
             repositoryName: 'elt-dbt-repo',
             removalPolicy: cdk.RemovalPolicy.DESTROY,
         });
-        ecrRepo.repositoryUri
+        
+        const redshiftSecret = new secretsmanager.Secret(this, 'redshift-credentials', {
+            secretName: 'redshift-credentials',
+            generateSecretString: {
+              secretStringTemplate: '{"username":"redshift-user"}',
+              generateStringKey: 'password',
+              passwordLength: 32,
+              excludeCharacters: '\"@/',
+              excludePunctuation: true,
+            },
+          });
+
+        const redshiftCluster = this._createRedshiftCluster(vpc, redshiftSecret);
+
+        this._createDataOPSPipeline(ecrRepo);
+
+        // this._getAirflowBucket();
+        new ecs.Cluster(this, 'dataops-ecs-cluster', {
+            vpc,
+            clusterName: 'dataops-ecs-cluster',
+            containerInsights: true,
+        })
+
+        const executionRole= this._createTaskExecutionRole();
+        const dataopsTaskDefinition = new ecs.FargateTaskDefinition(this, 'dataops-task-def', {
+            family: 'dataops-task',
+            cpu: 512,
+            memoryLimitMiB: 1024,
+            executionRole,
+            taskRole: this._createTaskRole(),
+        });
+        dataopsTaskDefinition.addContainer('dataops-container', {
+            image: ecs.AssetImage.fromEcrRepository(ecrRepo),
+            environment: {
+                'REDSHIFT_HOST': redshiftCluster.clusterEndpoint.hostname,
+                'REDSHIFT_DBNAME':this.RedshiftDB,
+                'REDSHIFT_SCHEMA':this.RedshiftSchema,
+            },
+            secrets: {
+                'REDSHIFT_USER': ecs.Secret.fromSecretsManager(redshiftSecret, 'username'),
+                'REDSHIFT_PASSWORD': ecs.Secret.fromSecretsManager(redshiftSecret, 'password'),
+            },
+            logging: new ecs.AwsLogDriver({
+                streamPrefix: 'ecs',
+            })
+        });
+        
+        ecrRepo.grantPullPush(executionRole);
+    }
+
+    private _createTaskExecutionRole(): iam.Role {
+        const executionRole = new iam.Role(this, 'AirflowTaskExecutionRole', {
+          assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+        });
+    
+        executionRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy'));
+        executionRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('AdministratorAccess'));
+        return executionRole;
+      }
+    
+      private _createTaskRole(): iam.Role {
+        const taskRole = new iam.Role(this, 'AirflowTaskRole', {
+          assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+        });
+        taskRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('AdministratorAccess'));
+ 
+    
+        //Secrets Manager
+        taskRole.addToPolicy(new iam.PolicyStatement({
+          effect: iam.Effect.ALLOW,
+          actions: ['secretsmanager:GetSecretValue'],
+          resources: ['*'],
+        }));
+    
+        return taskRole;
+      }
+
+    // private _getAirflowBucket(): s3.IBucket {
+    //     const bucketName = `airflow-bucket-${Math.floor(Math.random() * 1000001)}`;
+    //     const airflowBucket = new s3.Bucket(this, 'AirflowBucket', {
+    //       bucketName,
+    //       removalPolicy: cdk.RemovalPolicy.DESTROY,
+    //       blockPublicAccess: new s3.BlockPublicAccess({
+    //         blockPublicAcls: true,
+    //         blockPublicPolicy: true,
+    //         ignorePublicAcls: true,
+    //         restrictPublicBuckets: true,
+    //       }),
+    //       autoDeleteObjects: true,
+    //     });
+    //     new cdk.CfnOutput(this, 'airflow-bucket', {
+    //       value: airflowBucket.bucketName,
+    //       exportName: 'AirflowBucket',
+    //       description: 'Buckent Name',
+    //     });
+    //     return airflowBucket;
+    //   }
+
+    private _createDataOPSPipeline(ecrRepo: ecr.IRepository) {
+        
 
         const repo = new codecommit.Repository(this, 'elt-dbt-demo-repo', {
             repositoryName: 'elt-dbt-demo-repo',
             description: 'ELT with DBT Demo Repo'
         });
 
+
         const codeProject = new codebuild.Project(this, 'elt-dbt-code-build', {
             projectName: 'elt-dbt-code-build',
-            source: codebuild.Source.codeCommit({repository: repo}),
+            source: codebuild.Source.codeCommit({ repository: repo }),
             environment: {
                 privileged: true,
             },
             environmentVariables: {
                 'ECR_REPO_URI': {
                     value: `${ecrRepo.repositoryUri}`
-                }
+                },
+                'IMAGE_REPO_NAME': {
+                    value: `${ecrRepo.repositoryName}`
+                },
+                'IMAGE_TAG': {
+                    value: 'latest'
+                },
             },
             buildSpec: codebuild.BuildSpec.fromObject({
                 version: '0.2',
@@ -37,22 +157,57 @@ export class DataOPS extends cdk.Construct{
                         commands: [
                             'echo logging into ECR',
                             '$(aws ecr get-login --no-include-email --region $AWS_DEFAULT_REGION)',
-                            'export TAG=${CODEBUILD_RESOLVED_SOURCE_VERSION}',
                             'npm install -g aws-cdk',
-                            'npm update'],
+                            'npm update'
+                        ],
                     },
                     build: {
-                        commands: ['echo Entered the build phase for dbt...', 
-                        `docker build -t $ECR_REPO_URI:$TAG images/`],
+                        commands: ['echo Entered the build phase for dbt...',
+                            `docker build -t $IMAGE_REPO_NAME images/`,
+                            'docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $ECR_REPO_URI:$IMAGE_TAG'],
                     },
                     post_build: {
-                        commands: ['echo Pushing dbt docker image...', 
-                        `docker push $ECR_REPO_URI:$TAG`],
+                        commands: ['echo Pushing dbt docker image...',
+                            `docker push $ECR_REPO_URI:$IMAGE_TAG`],
                     }
                 },
-              }),
+            }),
         });
 
         ecrRepo.grantPullPush(codeProject.role!);
+
+        repo.onCommit('onCommit', {
+            target: new targets.CodeBuildProject(codeProject),
+            branches: ['main'],
+        });
+    }
+
+    private _createRedshiftCluster(vpc: ec2.IVpc, redshiftSecret: secretsmanager.ISecret): redshift.ICluster{
+        const subnetGroup = new redshift.ClusterSubnetGroup(this, 'RedshiftSubnetGroup', {
+            description: 'Redshift Private Subnet Group',
+            vpc,
+            removalPolicy: cdk.RemovalPolicy.DESTROY,
+            vpcSubnets: {
+                subnetType: ec2.SubnetType.PUBLIC,
+            },
+        });
+
+
+
+        const redshiftCluster = new redshift.Cluster(this, 'redshift-cluster', {
+            vpc,
+            masterUser: {
+                masterUsername: this.RedshiftUser,
+                masterPassword: redshiftSecret.secretValueFromJson('password'),
+            },
+            clusterName: 'redshift-cluster',
+            clusterType: redshift.ClusterType.SINGLE_NODE,
+            defaultDatabaseName: this.RedshiftDB,
+            publiclyAccessible: true,
+            subnetGroup,
+        });
+
+        redshiftCluster.connections.allowDefaultPortFromAnyIpv4('Just for Demo Purpose');
+        return redshiftCluster;
     }
 }
