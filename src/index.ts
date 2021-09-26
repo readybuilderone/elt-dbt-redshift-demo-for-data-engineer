@@ -35,10 +35,46 @@ export class DataOPS extends cdk.Construct{
             value: airflowBucket.bucketName,
         });
 
-        new mwaa.CfnEnvironment(this, 'id', {
-            name: 'airflow'
+        const mwaaExecutionRole = new iam.Role(this, 'mwaaExecutionRole', {
+            assumedBy: new iam.CompositePrincipal(
+                new iam.ServicePrincipal('airflow.amazonaws.com'),
+                new iam.ServicePrincipal('airflow-env.amazonaws.com'),
+            )
         });
-        //https://github.com/094459/blogpost-cdk-mwaa/blob/main/mwaa_cdk/mwaa_cdk_env.py
+        
+        mwaaExecutionRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonECS_FullAccess'));
+        mwaaExecutionRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchFullAccess'));
+        airflowBucket.grantRead(mwaaExecutionRole);
+
+        const mwaaSG = new ec2.SecurityGroup(this, 'mwaaSG', {
+            vpc,
+            allowAllOutbound: true,
+        });
+        mwaaSG.connections.allowFrom(mwaaSG, ec2.Port.allTraffic());
+
+        const mwaaCluster = new mwaa.CfnEnvironment(this, 'id', {
+            name: 'dataops-airflow-env',
+            webserverAccessMode: 'PUBLIC_ONLY',
+            sourceBucketArn: airflowBucket.bucketArn,
+            dagS3Path: 'dags',
+            environmentClass: 'mw1.small',
+            maxWorkers: 10,
+            minWorkers: 1,
+            executionRoleArn: mwaaExecutionRole.roleArn,
+            airflowConfigurationOptions: {
+                'logging.logging_level': 'INFO',
+                'core.default_timezone': 'utc',
+            },
+            networkConfiguration: {
+                subnetIds: vpc.privateSubnets.map(subnet => subnet.subnetId),
+                securityGroupIds: [mwaaSG.securityGroupId],
+            }
+        });
+        mwaaExecutionRole.addToPolicy(new iam.PolicyStatement({
+            actions: ['airflow:PublishMetrics'],
+            effect: iam.Effect.ALLOW,
+            resources: [mwaaCluster.attrArn],
+        }));
     }
 
     private _createECSResources(vpc: ec2.Vpc, ecrRepo: ecr.Repository, redshiftCluster: redshift.ICluster, redshiftSecret: secretsmanager.Secret) {
