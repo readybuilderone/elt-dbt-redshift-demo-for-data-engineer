@@ -44,6 +44,7 @@ export class DataOPS extends cdk.Construct{
         
         mwaaExecutionRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonECS_FullAccess'));
         mwaaExecutionRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchFullAccess'));
+        mwaaExecutionRole.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonS3ReadOnlyAccess'));
         airflowBucket.grantRead(mwaaExecutionRole);
 
         const mwaaSG = new ec2.SecurityGroup(this, 'mwaaSG', {

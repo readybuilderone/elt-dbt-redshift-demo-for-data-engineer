@@ -9,5 +9,9 @@
     "ap-southeast-1a",
     "ap-southeast-1b",
     "ap-southeast-1c"
+  ],
+  "availability-zones:account=750521193989:region=us-west-1": [
+    "us-west-1b",
+    "us-west-1c"
   ]
 }
